@@ -1,0 +1,69 @@
+/* ==========================================================================
+   Typography — Space Grotesk (headings/brand) + Inter (body/UI)
+   ========================================================================== */
+
+body {
+  font-family: var(--font-body);
+  /* shorthand, not background-color — Aero Blue's --bg is a gradient */
+  background: var(--bg);
+  background-attachment: fixed;
+  color: var(--text);
+  font-size: 1rem;
+  line-height: 1.6;
+}
+
+h1, h2, h3, h4, h5, h6,
+.display-heading {
+  font-family: var(--font-heading);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.text-muted-custom {
+  color: var(--text-muted) !important;
+}
+
+.text-faint {
+  color: var(--text-faint) !important;
+}
+
+.text-accent {
+  color: var(--accent) !important;
+}
+
+.eyebrow {
+  font-family: var(--font-heading);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+  transition: color var(--transition-fast);
+}
+
+a:hover {
+  color: var(--accent-hover);
+}
+
+code, pre, kbd {
+  font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+
+code {
+  background-color: var(--surface-alt);
+  color: var(--accent);
+  padding: 0.15em 0.4em;
+  border-radius: var(--radius-sm);
+  font-size: 0.875em;
+}
+
+::selection {
+  background-color: var(--accent-soft);
+  color: var(--text);
+}

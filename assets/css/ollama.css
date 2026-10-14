@@ -1,0 +1,154 @@
+/* ==========================================================================
+   Ollama Manager page-specific styles. Tokens only, no hardcoded colours.
+   ========================================================================== */
+
+.container-80 {
+  width: 80%;
+  max-width: none;
+  margin-inline: auto;
+}
+
+@media (max-width: 767.98px) {
+  .container-80 { width: 94%; }
+}
+
+.progress-tall {
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--bevel-shadow-inset);
+  display: flex;
+  height: 1.75rem;
+}
+
+.progress-tall .progress-bar {
+  background-color: var(--accent);
+  border-radius: var(--radius-pill);
+  height: 100%;
+  min-width: 1.25rem;
+  transition: width var(--transition);
+}
+
+.progress-custom .progress-bar.bar-warn { background-color: var(--warning); }
+.progress-custom .progress-bar.bar-danger { background-color: var(--danger); }
+
+.model-list,
+.loaded-list {
+  max-height: 22rem;
+  overflow-y: auto;
+  border-radius: var(--radius);
+}
+
+.model-list {
+  min-height: 12rem;
+}
+
+.model-list .list-group-item,
+.loaded-list .list-group-item,
+#browseList .list-group-item {
+  background-color: var(--surface-alt);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.model-list .list-group-item.active {
+  background-color: var(--accent);
+  border-color: var(--accent);
+  color: var(--text-on-accent);
+}
+
+.model-list .list-group-item.active .text-faint {
+  color: var(--text-on-accent);
+}
+
+.confirm-icon {
+  color: var(--warning);
+  display: block;
+  font-size: 2.5rem;
+}
+
+.confirm-name {
+  background-color: var(--accent-soft);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius);
+  color: var(--text);
+  display: inline-block;
+  font-family: var(--font-heading);
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin-bottom: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  word-break: break-all;
+}
+
+.code-block {
+  background-color: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--bevel-shadow-inset);
+  color: var(--text);
+  font-size: 0.85rem;
+  margin: 0;
+  padding: var(--space-3);
+  text-align: left;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.log-block {
+  max-height: 16rem;
+  overflow-y: auto;
+}
+
+/* Waiting animation inside the "adding model" modal */
+.orbit {
+  align-items: center;
+  display: inline-flex;
+  height: 6rem;
+  justify-content: center;
+  position: relative;
+  width: 6rem;
+}
+
+.orbit-ring {
+  animation: orbit-spin 1.2s linear infinite;
+  border: 0.3rem solid var(--accent-soft);
+  border-radius: 50%;
+  border-top-color: var(--accent);
+  inset: 0;
+  position: absolute;
+}
+
+.orbit-ring-2 {
+  animation-direction: reverse;
+  animation-duration: 1.9s;
+  border-top-color: var(--info);
+  inset: 0.7rem;
+}
+
+.orbit-icon {
+  animation: orbit-pulse 1.6s ease-in-out infinite;
+  color: var(--accent);
+  font-size: 1.75rem;
+}
+
+.orbit-done .orbit-ring,
+.orbit-failed .orbit-ring {
+  animation: none;
+}
+
+.orbit-done .orbit-ring { border-color: var(--success); }
+.orbit-done .orbit-icon { animation: none; color: var(--success); }
+.orbit-failed .orbit-ring { border-color: var(--danger); }
+.orbit-failed .orbit-icon { animation: none; color: var(--danger); }
+
+@keyframes orbit-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes orbit-pulse {
+  0%, 100% { opacity: 0.55; transform: scale(0.9); }
+  50% { opacity: 1; transform: scale(1.1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .orbit-ring, .orbit-icon { animation-duration: 6s; }
+}
