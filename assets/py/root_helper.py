@@ -17,6 +17,7 @@ RULES = {
     "OLLAMA_KV_CACHE_TYPE": re.compile(r"^(f16|q8_0|q4_0)$"),
     "OLLAMA_NUM_PARALLEL": re.compile(r"^[1-9][0-9]?$"),
     "OLLAMA_MAX_LOADED_MODELS": re.compile(r"^[0-9]{1,2}$"),
+    "OLLAMA_NUM_CTX": re.compile(r"^([1-9]\d{2,6})$"),  # 128-9,999,999 tokens
 }
 
 

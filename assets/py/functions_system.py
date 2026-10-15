@@ -14,6 +14,7 @@ SETTING_RULES = {
     "OLLAMA_KV_CACHE_TYPE": re.compile(r"^(f16|q8_0|q4_0)$"),
     "OLLAMA_NUM_PARALLEL": re.compile(r"^[1-9][0-9]?$"),
     "OLLAMA_MAX_LOADED_MODELS": re.compile(r"^[0-9]{1,2}$"),
+    "OLLAMA_NUM_CTX": re.compile(r"^([1-9]\d{2,6})$"),  # 128-9,999,999 tokens
 }
 
 
@@ -42,6 +43,16 @@ def service_env():
         if "=" in token:
             key, value = token.split("=", 1)
             env[key] = value
+    # Also read drop-in file for OLLAMA_NUM_CTX (may not be in systemctl yet after write)
+    dropin = "/etc/systemd/system/ollama.service.d/zz-manager.conf"
+    try:
+        with open(dropin, encoding="utf-8") as fh:
+            for line in fh:
+                m = re.match(r'^Environment="(OLLAMA_NUM_CTX)=([^"]*)"$', line.strip())
+                if m:
+                    env[m.group(1)] = m.group(2)
+    except (OSError, IOError):
+        pass
     return env
 
 

@@ -253,6 +253,13 @@
             <button class="btn btn-primary btn-lg" data-setting="OLLAMA_MAX_LOADED_MODELS" data-source="setMaxLoaded" title="Save and restart the daemon"><i class="bi bi-check2"></i></button>
           </div>
         </div>
+        <div class="col-md-6">
+          <label class="form-label" for="setNumCtx">Context size (tokens)</label>
+          <div class="input-group input-group-lg">
+            <input type="text" class="form-control form-control-lg" id="setNumCtx" inputmode="numeric" title="OLLAMA_NUM_CTX: Maximum context window in tokens (128-9999999). Use 8192 for normal speed, 64000 for longer conversations but slower inference.">
+            <button class="btn btn-primary btn-lg" data-setting="OLLAMA_NUM_CTX" data-source="setNumCtx" title="Save and restart the daemon"><i class="bi bi-check2"></i></button>
+          </div>
+        </div>
       </div>
 
       <h5 class="text-center mb-3"><i class="bi bi-terminal me-2"></i>Cheat sheet</h5>

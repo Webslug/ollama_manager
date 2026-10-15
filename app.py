@@ -70,6 +70,7 @@ S = omf.STRINGS
 mf = omf.functions_modelfile
 oll = omf.functions_ollama
 sysf = omf.functions_system
+gguf = omf.functions_gguf
 logf = omf.functions_log
 
 app = Flask(__name__, static_folder=ASSETS_DIR, static_url_path="/assets")
@@ -185,6 +186,10 @@ def api_modelfile_create():
     clean, err = mf.validate(request.json or {})
     if err:
         return fail(err)
+    reason = gguf.unsupported_reason(clean["path"])
+    if reason:
+        logf.debug_log(f"unsupported gguf: {clean['path']}")
+        return jsonify(error=reason), 422
     path = mf.write(clean)
     logf.debug_log(f"modelfile written: {path}")
     return jsonify(path=path, text=mf.build(clean))
@@ -204,6 +209,9 @@ def api_models_create():
     clean, err = mf.validate(data)
     if err:
         return fail(err)
+    reason = gguf.unsupported_reason(clean["path"])
+    if reason:
+        return jsonify(error=reason), 422
     modelfile_path = os.path.join(cfg.MODELFILE_DIR, mf.safe_filename(clean["name"]))
     if not os.path.isfile(modelfile_path):
         return fail("modelfile_missing")

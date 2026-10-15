@@ -156,7 +156,8 @@
 
   // ---------- status / daemon ----------
   var SETTING_INPUTS = { OLLAMA_FLASH_ATTENTION: "setFlash", OLLAMA_KV_CACHE_TYPE: "setKv",
-                         OLLAMA_NUM_PARALLEL: "setParallel", OLLAMA_MAX_LOADED_MODELS: "setMaxLoaded" };
+                         OLLAMA_NUM_PARALLEL: "setParallel", OLLAMA_MAX_LOADED_MODELS: "setMaxLoaded",
+                         OLLAMA_NUM_CTX: "setNumCtx" };
   var settingsSynced = false;
 
   function renderStatus(s) {
