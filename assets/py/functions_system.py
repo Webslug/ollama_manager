@@ -44,9 +44,8 @@ def service_env():
             key, value = token.split("=", 1)
             env[key] = value
     # Also read drop-in file for OLLAMA_NUM_CTX (may not be in systemctl yet after write)
-    dropin = "/etc/systemd/system/ollama.service.d/zz-manager.conf"
     try:
-        with open(dropin, encoding="utf-8") as fh:
+        with open(settings.OLLAMA_DROPIN, encoding="utf-8") as fh:
             for line in fh:
                 m = re.match(r'^Environment="(OLLAMA_NUM_CTX)=([^"]*)"$', line.strip())
                 if m:

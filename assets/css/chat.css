@@ -1,0 +1,124 @@
+/* ==========================================================================
+   Chat section: message log, bubbles and saved-conversation list.
+   Tokens only, no hardcoded colours.
+   ========================================================================== */
+
+.chat-log {
+  background-color: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--bevel-shadow-inset);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  height: 28rem;
+  overflow-y: auto;
+  padding: var(--space-3);
+}
+
+.chat-empty {
+  color: var(--text-faint);
+  margin: auto;
+  text-align: center;
+}
+
+.chat-msg {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  max-width: 85%;
+  padding: var(--space-2) var(--space-3);
+}
+
+.chat-msg-user {
+  align-self: flex-end;
+  background-color: var(--accent-soft);
+  border-color: var(--accent-border);
+}
+
+.chat-msg-assistant {
+  align-self: flex-start;
+  background-color: var(--surface);
+}
+
+.chat-who {
+  color: var(--text-muted);
+  font-family: var(--font-heading);
+  font-size: 0.8rem;
+  font-weight: 600;
+  margin-bottom: var(--space-1);
+}
+
+.chat-text {
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.chat-msg.pending .chat-text::after {
+  animation: chat-blink 1s steps(2, start) infinite;
+  content: "\258D";
+  color: var(--accent);
+}
+
+@keyframes chat-blink {
+  to { visibility: hidden; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-msg.pending .chat-text::after { animation: none; }
+}
+
+#chatInput {
+  resize: vertical;
+}
+
+.form-check-lg .form-check-input {
+  height: 1.5rem;
+  margin-top: 0.15rem;
+  width: 1.5rem;
+}
+
+.form-check-lg .form-check-label {
+  padding-left: var(--space-2);
+}
+
+.chat-saved {
+  border-radius: var(--radius);
+  max-height: 16rem;
+  overflow-y: auto;
+}
+
+.chat-saved .list-group-item {
+  background-color: var(--surface-alt);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.chat-saved .chat-saved-row {
+  align-items: center;
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+}
+
+.chat-saved .chat-saved-row.active {
+  background-color: var(--accent-soft);
+  border-color: var(--accent-border);
+}
+
+.chat-saved .chat-open {
+  background: none;
+  border: 0;
+  color: inherit;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: var(--space-2) 0;
+  text-align: left;
+}
+
+.chat-saved .chat-open .chat-title {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

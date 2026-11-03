@@ -4,6 +4,7 @@ import os
 import re
 import subprocess
 import threading
+import time
 import urllib.error
 import urllib.request
 import uuid
@@ -41,6 +42,42 @@ def loaded_models():
         "vram_mb": round(m.get("size_vram", 0) / 1048576),
         "expires_at": m.get("expires_at"),
     } for m in data.get("models", [])]
+
+
+def stream_chat(model, messages):
+    """Yield {"delta": text}, then {"done": True} or {"error": text}. Sends no options,
+    so the Modelfile's own system prompt, temperature and context apply."""
+    payload = json.dumps({"model": model, "messages": messages, "stream": True}).encode()
+    req = urllib.request.Request(settings.OLLAMA_URL + "/api/chat", data=payload,
+                                 headers={"Content-Type": "application/json"})
+    debug_log(f"chat request: model={model} messages={len(messages)}")
+    try:
+        with urllib.request.urlopen(req, timeout=settings.CHAT_TIMEOUT) as resp:
+            for raw in resp:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                obj = json.loads(raw)
+                if obj.get("error"):
+                    yield {"error": str(obj["error"])}
+                    return
+                piece = (obj.get("message") or {}).get("content", "")
+                if piece:
+                    yield {"delta": piece}
+                if obj.get("done"):
+                    yield {"done": True}
+                    return
+        yield {"error": "The model stopped before finishing its reply."}
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = json.loads(exc.read().decode()).get("error", "")
+        except (ValueError, OSError):
+            detail = ""
+        debug_log(f"chat failed: HTTP {exc.code} {detail}")
+        yield {"error": detail or f"Ollama returned HTTP {exc.code}."}
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        debug_log(f"chat failed: {exc}")
+        yield {"error": f"Could not reach Ollama: {exc}"}
 
 
 def unload(model):
@@ -128,3 +165,38 @@ def start_create(name, modelfile_path, gguf_path):
 
 def job_status(job_id):
     return _jobs.get(job_id)
+
+
+def _run_load(job_id, name):
+    """Load a model into memory with an empty generate request (no inference runs)."""
+    job = _jobs[job_id]
+    started = time.time()
+    result = {}
+
+    def worker():
+        result["data"] = api("/api/generate", {"model": name}, timeout=settings.CREATE_TIMEOUT)
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    job["lines"].append("Asking Ollama to load " + name + " ...")
+    while thread.is_alive():
+        thread.join(1)
+        job["elapsed"] = int(time.time() - started)
+    if result.get("data") is None:
+        job["lines"].append("Ollama could not load the model. Check VRAM and the daemon status.")
+        job["status"] = "failed"
+        log_event(f"FAILED to load model '{name}'")
+        return
+    for m in loaded_models():
+        if m["name"] in (name, name + ":latest"):
+            job["lines"].append(f"Loaded in {job['elapsed']}s: {m['vram_mb']} MB VRAM of {m['size_mb']} MB.")
+    job["status"] = "done"
+    log_event(f"LOADED model '{name}' into memory")
+
+
+def start_load(name):
+    job_id = uuid.uuid4().hex[:12]
+    with _jobs_lock:
+        _jobs[job_id] = {"status": "running", "lines": [], "returncode": None, "name": name, "elapsed": 0}
+    threading.Thread(target=_run_load, args=(job_id, name), daemon=True).start()
+    return job_id

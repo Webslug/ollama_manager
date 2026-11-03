@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Ollama Manager: a small Flask front end for adding, removing and tuning Ollama models."""
 import importlib.util
+import json
 import logging
 import os
 import socket
 import sys
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, Response, jsonify, request, send_from_directory, stream_with_context
 from flask import cli as flask_cli
 
 # ----------------------------------------------------------------------
@@ -20,6 +21,7 @@ PORT_TRIES = 50                        # if PORT is busy, try PORT+1 ... PORT+PO
 OLLAMA_URL = "http://127.0.0.1:11434"
 OLLAMA_BIN = "ollama"
 OLLAMA_SERVICE = "ollama"
+OLLAMA_DROPIN = "/etc/systemd/system/ollama.service.d/zz-manager.conf"  # Settings file; change if needed
 
 DEFAULT_MODELS_DIR = "/media/storage/backup/AI/Models/"
 OLLAMA_STORE_FALLBACK = "/media/storage/backup/AI/Models/Ollama"
@@ -29,6 +31,16 @@ DEFAULT_SYSTEM_PROMPT = "You are a friendly, helpful and honest disembodied AI a
 DEFAULT_KEEP_ALIVE = "15m"
 
 LOG_FILENAME = "ollama_manager.log"
+CHAT_DB_FILENAME = "chat.sqlite"        # created on demand in data/chat/
+USER_NAME = "User"                     # {{user}} in the system prompt
+CHAR_NAME = "Assistant"                # {{char}} in the system prompt
+PROMPT_FILE = "prompt.txt"             # data/prompts/prompt.txt, created on first use
+VARIABLES_FILE = "variables.json"      # data/prompts/variables.json, your own {{variables}}
+PROMPT_FREEZE = True                   # True: fill the prompt in once per conversation and store it
+                                       # (keeps Ollama's prompt cache valid). False: refill every message.
+CONTEXT_FALLBACK = 2048                # {{context_size}} if neither the Modelfile nor Ollama's settings say
+CHAT_TIMEOUT = 600                     # seconds Ollama may stay silent (covers model load time)
+CHAT_MAX_CHARS = 400000                # refuse to send a conversation larger than this
 LOG_MAX_BYTES = 100 * 1024             # auto-truncated above this size
 CREATE_TIMEOUT = 3600                  # seconds allowed for one "ollama create"
 STATUS_POLL_SECONDS = 5                # how often the page refreshes VRAM and status
@@ -60,9 +72,19 @@ cfg.LOG_MAX_BYTES = LOG_MAX_BYTES
 cfg.OLLAMA_URL = OLLAMA_URL
 cfg.OLLAMA_BIN = OLLAMA_BIN
 cfg.OLLAMA_SERVICE = OLLAMA_SERVICE
+cfg.OLLAMA_DROPIN = OLLAMA_DROPIN
 cfg.DEFAULT_MODELS_DIR = DEFAULT_MODELS_DIR
 cfg.OLLAMA_STORE_FALLBACK = OLLAMA_STORE_FALLBACK
 cfg.MODELFILE_DIR = os.path.join(BASE_DIR, "data", "modelfiles")
+cfg.CHAT_DB = os.path.join(BASE_DIR, "data", "chat", CHAT_DB_FILENAME)
+cfg.USER_NAME = USER_NAME
+cfg.CHAR_NAME = CHAR_NAME
+cfg.PROMPT_FILE = os.path.join(BASE_DIR, "data", "prompts", PROMPT_FILE)
+cfg.VARIABLES_FILE = os.path.join(BASE_DIR, "data", "prompts", VARIABLES_FILE)
+cfg.PROMPT_FREEZE = PROMPT_FREEZE
+cfg.CONTEXT_FALLBACK = CONTEXT_FALLBACK
+cfg.CHAT_TIMEOUT = CHAT_TIMEOUT
+cfg.CHAT_MAX_CHARS = CHAT_MAX_CHARS
 cfg.HELPER_PATH = os.path.join(ASSETS_DIR, "py", "root_helper.py")
 cfg.CREATE_TIMEOUT = CREATE_TIMEOUT
 
@@ -72,6 +94,8 @@ oll = omf.functions_ollama
 sysf = omf.functions_system
 gguf = omf.functions_gguf
 logf = omf.functions_log
+chatf = omf.functions_chat
+promptf = omf.functions_prompt
 
 app = Flask(__name__, static_folder=ASSETS_DIR, static_url_path="/assets")
 ALLOWED_HOSTS = {"localhost", "127.0.0.1"}
@@ -225,6 +249,16 @@ def api_models_create():
     return jsonify(job=job_id)
 
 
+@app.route("/api/models/load", methods=["POST"])
+def api_models_load():
+    model = str((request.json or {}).get("model", ""))
+    if not mf.NAME_RE.match(model):
+        return fail("bad_name")
+    if not oll.version():
+        return fail("daemon_down", 502)
+    return jsonify(job=oll.start_load(model))
+
+
 @app.route("/api/jobs/<job_id>")
 def api_job(job_id):
     job = oll.job_status(job_id)
@@ -253,6 +287,109 @@ def api_models_show():
     if text is None:
         return fail(err or "show failed", 502)
     return jsonify(text=text)
+
+
+# ----- chat -----
+def _chat_input(data, need_user_last=False):
+    """Validate model and messages from a request body. Returns (model, messages, error_key)."""
+    model = str(data.get("model", ""))
+    if not mf.NAME_RE.match(model):
+        return None, None, "bad_name"
+    messages = chatf.clean_messages(data.get("messages"))
+    if messages is None or (need_user_last and (not messages or messages[-1]["role"] != "user")):
+        return None, None, "bad_messages"
+    if sum(len(m["content"]) for m in messages) > CHAT_MAX_CHARS:
+        return None, None, "chat_too_long"
+    return model, messages, None
+
+
+@app.route("/api/chat/send", methods=["POST"])
+def api_chat_send():
+    model, messages, err = _chat_input(request.json or {}, need_user_last=True)
+    if err:
+        return fail(err)
+    if not oll.version():
+        return fail("daemon_down", 502)
+
+    # The system prompt comes from data/prompts/prompt.txt. A conversation that already has
+    # one keeps it, so the start of the prompt never changes and Ollama can reuse its cache.
+    system_text = None
+    if messages[0]["role"] != "system":
+        system_text = promptf.render(model)
+        if system_text:
+            messages = [{"role": "system", "content": system_text}] + messages
+
+    def generate():
+        stream = oll.stream_chat(model, messages)
+        try:
+            if system_text and cfg.PROMPT_FREEZE:
+                yield json.dumps({"system": system_text}) + "\n"
+            for item in stream:
+                yield json.dumps(item) + "\n"
+        finally:
+            stream.close()   # browser stopped or left: close the upstream request
+
+    return Response(stream_with_context(generate()), mimetype="application/x-ndjson",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.route("/api/prompt")
+def api_prompt():
+    model = request.args.get("model", "")
+    if model and not mf.NAME_RE.match(model):
+        return fail("bad_name")
+    return jsonify(rendered=promptf.render(model), variables=promptf.all_values(model),
+                   descriptions=promptf.descriptions(), file=cfg.PROMPT_FILE,
+                   variables_file=cfg.VARIABLES_FILE, frozen=cfg.PROMPT_FREEZE)
+
+
+@app.route("/api/chat/conversations")
+def api_chat_conversations():
+    model = request.args.get("model", "")
+    if not mf.NAME_RE.match(model):
+        return fail("bad_name")
+    return jsonify(conversations=chatf.list_conversations(model))
+
+
+@app.route("/api/chat/conversation/<int:conv_id>")
+def api_chat_conversation(conv_id):
+    conv = chatf.get_conversation(conv_id)
+    if conv is None:
+        return fail("not_found", 404)
+    return jsonify(conv)
+
+
+@app.route("/api/chat/save", methods=["POST"])
+def api_chat_save():
+    data = request.json or {}
+    model, messages, err = _chat_input(data)
+    if err:
+        return fail(err)
+    if not messages:
+        return fail("chat_empty")
+    conv_id = data.get("id")
+    if conv_id is not None and (not isinstance(conv_id, int) or isinstance(conv_id, bool)):
+        return fail("bad_messages")
+    saved = chatf.save_conversation(model, messages, conv_id)
+    if saved is None:
+        return fail("not_found", 404)
+    return jsonify(ok=True, id=saved)
+
+
+@app.route("/api/chat/delete", methods=["POST"])
+def api_chat_delete():
+    conv_id = (request.json or {}).get("id")
+    if not isinstance(conv_id, int) or isinstance(conv_id, bool):
+        return fail("bad_messages")
+    return jsonify(ok=chatf.delete_conversation(conv_id))
+
+
+@app.route("/api/chat/clear", methods=["POST"])
+def api_chat_clear():
+    model = str((request.json or {}).get("model", ""))
+    if not mf.NAME_RE.match(model):
+        return fail("bad_name")
+    return jsonify(ok=True, removed=chatf.clear_model(model))
 
 
 @app.route("/api/log")

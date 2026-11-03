@@ -6,6 +6,9 @@
   var selectedModel = null;
   var modelfileReady = false;
   var pollTimer = null;
+  var LAST_MODEL_KEY = "ollama-manager-last-model";
+  var loadedNow = [];
+  var daemonActive = false;
 
   bootstrap.Tooltip.Default.container = "body";
   bootstrap.Tooltip.Default.trigger = "hover";
@@ -160,7 +163,40 @@
                          OLLAMA_NUM_CTX: "setNumCtx" };
   var settingsSynced = false;
 
+  // ---------- quick unload / load last ----------
+  function lastModel() {
+    try { return localStorage.getItem(LAST_MODEL_KEY) || ""; } catch (e) { return ""; }
+  }
+
+  // Whatever is in memory, however it got there (Load button, chat, ollama run), counts as "last".
+  function rememberLastModel(loaded) {
+    loadedNow = loaded.map(function (m) { return m.name; });
+    if (!loaded.length) return;
+    var newest = loaded.reduce(function (a, b) { return (b.expires_at || "") > (a.expires_at || "") ? b : a; });
+    if (newest.name && newest.name !== lastModel()) {
+      try { localStorage.setItem(LAST_MODEL_KEY, newest.name); } catch (e) {}
+    }
+  }
+
+  function updateQuickButtons() {
+    var last = lastModel();
+    $("btnUnloadAll").disabled = !loadedNow.length;
+    $("btnLoadLast").disabled = !last || !daemonActive || loadedNow.indexOf(last) >= 0;
+    $("lastModelText").textContent = last
+      ? "Last model: " + last + (loadedNow.indexOf(last) >= 0 ? " (loaded now)" : "")
+      : "No model remembered yet. The last one you load is remembered here.";
+  }
+
+  function loadModel(name) {
+    api("/api/models/load", { model: name }).then(function (r) {
+      showAddModal(name, true);
+      pollJob(r.job, name, true);
+    }).catch(fail);
+  }
+
   function renderStatus(s) {
+    chatLoaded = s.loaded.map(function (m) { return m.name; });
+    refreshChatModels();
     var badge = $("daemonBadge");
     var active = s.state === "active";
     badge.textContent = active ? "Running" : (s.state === "inactive" ? "Stopped" : s.state);
@@ -168,6 +204,9 @@
     $("daemonVersion").textContent = s.version ? "v" + s.version : "";
     $("btnStart").disabled = active;
     $("btnStop").disabled = !active;
+    daemonActive = active;
+    rememberLastModel(s.loaded);
+    updateQuickButtons();
 
     if (!settingsSynced || document.activeElement !== $("keepAlive")) {
       if (!settingsSynced) $("keepAlive").value = s.keep_alive;
@@ -176,6 +215,8 @@
       Object.keys(SETTING_INPUTS).forEach(function (k) {
         if (s.env[k] !== undefined) $(SETTING_INPUTS[k]).value = s.env[k];
       });
+      // Default OLLAMA_NUM_CTX to 8192 if not set
+      if (!$("setNumCtx").value) $("setNumCtx").value = "8192";
       settingsSynced = true;
     }
 
@@ -248,26 +289,35 @@
     }).catch(fail).then(function () { busy(btn, false); });
   }
 
-  function showAddModal(name) {
-    $("addModalTitle").textContent = "Adding " + name;
-    $("addModalText").textContent = "Ollama is reading the file. Large models can take a few minutes.";
+  function showAddModal(name, loading) {
+    $("addModalTitle").textContent = (loading ? "Loading " : "Adding ") + name;
+    $("addModalText").textContent = loading
+      ? "Ollama is moving the model into memory. Large models can take a minute."
+      : "Ollama is reading the file. Large models can take a few minutes.";
     $("addModalLog").textContent = "";
     $("orbit").classList.remove("orbit-done", "orbit-failed");
     $("btnAddClose").classList.add("d-none");
     bootstrap.Modal.getOrCreateInstance($("addModal")).show();
   }
 
-  function pollJob(jobId, name) {
+  function pollJob(jobId, name, loading) {
     api("/api/jobs/" + jobId).then(function (job) {
       var log = $("addModalLog");
       log.textContent = job.lines.join("\n");
       log.scrollTop = log.scrollHeight;
-      if (job.status === "running") { setTimeout(function () { pollJob(jobId, name); }, 1000); return; }
+      if (job.status === "running") {
+        if (loading) $("addModalText").textContent = "Loading into memory... " + (job.elapsed || 0) + "s";
+        setTimeout(function () { pollJob(jobId, name, loading); }, 1000);
+        return;
+      }
       var ok = job.status === "done";
       $("orbit").classList.add(ok ? "orbit-done" : "orbit-failed");
-      $("addModalText").textContent = ok ? name + " was added to Ollama." : "Ollama could not add " + name + ".";
+      $("addModalText").textContent = loading
+        ? (ok ? name + " is loaded and ready." : "Ollama could not load " + name + ".")
+        : (ok ? name + " was added to Ollama." : "Ollama could not add " + name + ".");
       $("btnAddClose").classList.remove("d-none");
-      if (ok) loadModels();
+      if (ok && !loading) loadModels();
+      if (loading) pollStatus();
     }).catch(function (err) {
       $("addModalText").textContent = err.message;
       $("btnAddClose").classList.remove("d-none");
@@ -323,6 +373,8 @@
       var list = $("modelList");
       selectedModel = null;
       updateModelButtons();
+      chatInstalled = r.models.map(function (m) { return m.name; });
+      refreshChatModels();
       if (!r.models.length) {
         render(list, '<div class="list-group-item text-center text-faint">No models installed.</div>');
         return;
@@ -338,7 +390,7 @@
   }
 
   function updateModelButtons() {
-    ["btnRemove", "btnShow", "btnCopyName"].forEach(function (id) { $(id).disabled = !selectedModel; });
+    ["btnLoad", "btnRemove", "btnShow", "btnCopyName"].forEach(function (id) { $(id).disabled = !selectedModel; });
   }
 
   // ---------- cheat sheet and log ----------
@@ -380,6 +432,326 @@
       view.textContent = r.text || "No activity recorded yet.";
       view.scrollTop = view.scrollHeight;
     }).catch(function () {});
+  }
+
+  // ---------- chat ----------
+  var CHAT_AUTOSAVE_KEY = "ollama-manager-chat-autosave";
+  var chat = { id: null, model: "", messages: [], dirty: false, streaming: false, abort: null, savedCount: 0 };
+  var chatLoaded = [];
+  var chatInstalled = [];
+
+  function autosaveOn() {
+    try { return localStorage.getItem(CHAT_AUTOSAVE_KEY) === "1"; } catch (e) { return false; }
+  }
+
+  function updateChatButtons() {
+    var busyNow = chat.streaming;
+    $("chatModel").disabled = busyNow;
+    $("btnChatNew").disabled = busyNow || !chat.messages.length;
+    $("btnChatSave").disabled = busyNow || !chat.messages.length || !chat.dirty;
+    $("btnChatClear").disabled = busyNow || !chat.model || !chat.savedCount;
+    $("btnChatSend").disabled = !chat.model;
+    $("btnChatSend").classList.toggle("d-none", busyNow);
+    $("btnChatStop").classList.toggle("d-none", !busyNow);
+  }
+
+  function refreshChatModels() {
+    var sel = $("chatModel");
+    var names = chatLoaded.slice();
+    chatInstalled.forEach(function (n) { if (names.indexOf(n) < 0) names.push(n); });
+    if (chat.model && names.indexOf(chat.model) < 0) names.push(chat.model);
+    function opts(list) {
+      return list.map(function (n) { return '<option value="' + esc(n) + '">' + esc(n) + '</option>'; }).join("");
+    }
+    var rest = names.filter(function (n) { return chatLoaded.indexOf(n) < 0; });
+    var html = '<option value="">Choose a model</option>' +
+      (chatLoaded.length ? '<optgroup label="Loaded in memory">' + opts(chatLoaded) + '</optgroup>' : "") +
+      (rest.length ? '<optgroup label="Installed (loads on first message)">' + opts(rest) + '</optgroup>' : "");
+    if (sel.dataset.rendered !== html) {
+      sel.dataset.rendered = html;
+      sel.innerHTML = html;
+    }
+    if (!chat.model && chatLoaded.length && !chat.messages.length) {
+      chat.model = chatLoaded[0];
+      loadSaved();
+    }
+    sel.value = chat.model;
+    updateChatButtons();
+  }
+
+  function chatBubble(role, text) {
+    var el = document.createElement("div");
+    el.className = "chat-msg chat-msg-" + role;
+    var who = document.createElement("div");
+    who.className = "chat-who";
+    who.textContent = role === "user" ? "You" : (chat.model || "Model");
+    var body = document.createElement("div");
+    body.className = "chat-text";
+    body.textContent = text;
+    el.appendChild(who);
+    el.appendChild(body);
+    return el;
+  }
+
+  function renderChat() {
+    var log = $("chatLog");
+    log.textContent = "";
+    if (!chat.messages.length) {
+      var empty = document.createElement("p");
+      empty.className = "chat-empty";
+      empty.textContent = chat.model ? "Say something to " + chat.model + "." : "Choose a model to begin.";
+      log.appendChild(empty);
+    } else {
+      chat.messages.forEach(function (m) {
+        if (m.role !== "system") log.appendChild(chatBubble(m.role, m.content));
+      });
+      log.scrollTop = log.scrollHeight;
+    }
+    updateChatButtons();
+  }
+
+  function resetChat(model) {
+    chat.id = null;
+    chat.messages = [];
+    chat.dirty = false;
+    chat.model = model;
+    renderChat();
+  }
+
+  function confirmDiscard() {
+    if (chat.messages.length && chat.dirty) {
+      return confirmBox("Discard this conversation?", "It has not been saved.", "Discard");
+    }
+    return Promise.resolve(true);
+  }
+
+  function loadSaved() {
+    var model = chat.model;
+    if (!model) {
+      chat.savedCount = 0;
+      render($("chatSaved"), '<div class="list-group-item text-center text-faint">Choose a model to see its saved conversations.</div>');
+      updateChatButtons();
+      return;
+    }
+    api("/api/chat/conversations?model=" + encodeURIComponent(model)).then(function (r) {
+      if (model !== chat.model) return;
+      chat.savedCount = r.conversations.length;
+      updateChatButtons();
+      if (!r.conversations.length) {
+        render($("chatSaved"), '<div class="list-group-item text-center text-faint">Nothing saved for this model.</div>');
+        return;
+      }
+      render($("chatSaved"), r.conversations.map(function (c) {
+        return '<div class="list-group-item chat-saved-row' + (c.id === chat.id ? " active" : "") + '">' +
+          '<button type="button" class="chat-open" data-chat-open="' + c.id + '" title="Open this conversation">' +
+          '<strong class="chat-title">' + esc(c.title) + '</strong>' +
+          '<span class="text-faint">' + esc(c.updated) + ' &middot; ' + c.count + ' messages</span></button>' +
+          '<button type="button" class="btn btn-danger btn-lg btn-icon" data-chat-del="' + c.id +
+          '" title="Delete this conversation"><i class="bi bi-trash3"></i></button></div>';
+      }).join(""));
+    }).catch(function () {});
+  }
+
+  function chatSave(manual) {
+    var model = chat.model;
+    var snapshot = chat.messages.slice();
+    if (!model || !snapshot.length) return Promise.resolve();
+    function post(id) { return api("/api/chat/save", { model: model, messages: snapshot, id: id }); }
+    return post(chat.id).catch(function (err) {
+      if (err.status === 404 && chat.id !== null) { chat.id = null; return post(null); }
+      throw err;
+    }).then(function (r) {
+      chat.id = r.id;
+      chat.dirty = false;
+      updateChatButtons();
+      loadSaved();
+      if (manual) toast("Conversation saved.");
+    }).catch(fail);
+  }
+
+  function chatSend() {
+    var input = $("chatInput");
+    var text = input.value.trim();
+    if (chat.streaming) return;
+    if (!chat.model) { toast("Choose a model first.", "error"); return; }
+    if (!text) return;
+
+    var wasDirty = chat.dirty;
+    var history = chat.messages.concat([{ role: "user", content: text }]);
+    var reply = { role: "assistant", content: "" };
+    chat.messages = history.concat([reply]);
+    chat.dirty = true;
+    input.value = "";
+    chat.streaming = true;
+    renderChat();
+    var bubble = $("chatLog").lastChild;
+    bubble.classList.add("pending");
+    var bodyEl = bubble.querySelector(".chat-text");
+    var log = $("chatLog");
+    var streamError = "";
+    var finished = false;
+
+    function handle(line) {
+      if (!line.trim()) return;
+      var item = JSON.parse(line);
+      if (item.system) {
+        chat.messages.unshift({ role: "system", content: item.system });
+      } else if (item.delta) {
+        var atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+        reply.content += item.delta;
+        bodyEl.textContent = reply.content;
+        if (atBottom) log.scrollTop = log.scrollHeight;
+      } else if (item.error) {
+        streamError = item.error;
+      } else if (item.done) {
+        finished = true;
+      }
+    }
+
+    function pump(reader, decoder, buf) {
+      return reader.read().then(function (chunk) {
+        if (chunk.done) { handle(buf); return; }
+        var lines = (buf + decoder.decode(chunk.value, { stream: true })).split("\n");
+        var rest = lines.pop();
+        lines.forEach(handle);
+        return pump(reader, decoder, rest);
+      });
+    }
+
+    chat.abort = new AbortController();
+    fetch("/api/chat/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: chat.model, messages: history }),
+      signal: chat.abort.signal
+    }).then(function (r) {
+      if (!r.ok) {
+        return r.json().then(function (d) { throw new Error(d.error || "Request failed"); });
+      }
+      return pump(r.body.getReader(), new TextDecoder(), "");
+    }).catch(function (err) {
+      if (err.name !== "AbortError") streamError = err.message;
+      else finished = true;
+    }).then(function () {
+      chat.abort = null;
+      chat.streaming = false;
+      if (!streamError && !finished) streamError = "The reply was interrupted.";
+      if (!reply.content) {
+        chat.messages = history.slice(0, -1);
+        chat.dirty = wasDirty;
+        if (!input.value) input.value = text;
+      }
+      if (streamError) toast(streamError, "error");
+      renderChat();
+      if (reply.content && autosaveOn()) chatSave(false);
+    });
+  }
+
+  function showPrompt() {
+    var used = chat.messages.length && chat.messages[0].role === "system" ? chat.messages[0].content : null;
+    api("/api/prompt?model=" + encodeURIComponent(chat.model)).then(function (r) {
+      var names = Object.keys(r.variables);
+      var width = names.reduce(function (w, n) { return Math.max(w, n.length); }, 0) + 6;
+      function pad(text) { while (text.length < width) text += " "; return text; }
+      var lines = names.map(function (n) {
+        return pad("{{" + n + "}}") + String(r.variables[n] === null ? "(not a variable)" : r.variables[n]).replace(/\n/g, " | ") +
+          (r.descriptions[n] ? "   [" + r.descriptions[n] + "]" : "");
+      });
+      $("infoTitle").textContent = "System prompt";
+      $("infoBody").textContent =
+        (used ? "USED BY THIS CONVERSATION (fixed when it began):\n\n" + used + "\n\n\nWOULD BE USED FOR A NEW CONVERSATION:\n\n" : "WOULD BE USED FOR A NEW CONVERSATION:\n\n") +
+        r.rendered +
+        "\n\n\nEdit the template: " + r.file + "\nAdd your own variables: " + r.variables_file +
+        (r.frozen ? "" : "\n(PROMPT_FREEZE is off: the prompt is refilled on every message.)") +
+        "\n\nVARIABLES RIGHT NOW\n\n" + lines.join("\n");
+      bootstrap.Modal.getOrCreateInstance($("infoModal")).show();
+    }).catch(fail);
+  }
+
+  function initChat() {
+    $("chatAutosave").checked = autosaveOn();
+    $("chatAutosave").addEventListener("change", function () {
+      try { localStorage.setItem(CHAT_AUTOSAVE_KEY, this.checked ? "1" : "0"); } catch (e) {}
+      if (this.checked) {
+        toast("Auto-save is on. Conversations are stored in data/chat on this machine.");
+        if (chat.dirty && chat.messages.length && !chat.streaming) chatSave(false);
+      }
+    });
+
+    $("chatModel").addEventListener("change", function () {
+      var sel = this;
+      var next = sel.value;
+      confirmDiscard().then(function (ok) {
+        if (!ok) { sel.value = chat.model; return; }
+        resetChat(next);
+        loadSaved();
+      });
+    });
+
+    $("btnChatNew").addEventListener("click", function () {
+      confirmDiscard().then(function (ok) { if (ok) { resetChat(chat.model); loadSaved(); } });
+    });
+    $("btnChatSave").addEventListener("click", function () { chatSave(true); });
+    $("btnChatClear").addEventListener("click", function () {
+      var model = chat.model;
+      confirmBox("Clear saved conversations?",
+        "Every saved conversation for this model will be deleted. This cannot be undone.",
+        "Clear them", model).then(function (ok) {
+        if (!ok) return;
+        api("/api/chat/clear", { model: model }).then(function (r) {
+          if (model === chat.model) {
+            chat.id = null;
+            chat.dirty = chat.messages.length > 0;
+            loadSaved();
+          }
+          toast("Cleared " + r.removed + " saved conversation" + (r.removed === 1 ? "." : "s."));
+        }).catch(fail);
+      });
+    });
+
+    $("btnChatPrompt").addEventListener("click", showPrompt);
+    $("btnChatSend").addEventListener("click", chatSend);
+    $("btnChatStop").addEventListener("click", function () { if (chat.abort) chat.abort.abort(); });
+    $("chatInput").addEventListener("keydown", function (e) {
+      if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); chatSend(); }
+    });
+
+    $("chatSaved").addEventListener("click", function (e) {
+      var open = e.target.closest("[data-chat-open]");
+      var del = e.target.closest("[data-chat-del]");
+      if (chat.streaming) return;
+      if (open) {
+        var id = parseInt(open.dataset.chatOpen, 10);
+        confirmDiscard().then(function (ok) {
+          if (!ok) return;
+          api("/api/chat/conversation/" + id).then(function (c) {
+            chat.id = c.id;
+            chat.messages = c.messages;
+            chat.dirty = false;
+            renderChat();
+            loadSaved();
+          }).catch(fail);
+        });
+      } else if (del) {
+        var delId = parseInt(del.dataset.chatDel, 10);
+        var title = del.parentNode.querySelector(".chat-title").textContent;
+        confirmBox("Delete this conversation?", "It will be removed from the database.", "Delete", title).then(function (ok) {
+          if (!ok) return;
+          api("/api/chat/delete", { id: delId }).then(function () {
+            if (chat.id === delId) { chat.id = null; chat.dirty = chat.messages.length > 0; }
+            loadSaved();
+            updateChatButtons();
+          }).catch(fail);
+        });
+      }
+    });
+
+    window.addEventListener("beforeunload", function (e) {
+      if (chat.dirty && chat.messages.length) { e.preventDefault(); e.returnValue = ""; }
+    });
+
+    renderChat();
+    loadSaved();
   }
 
   // ---------- wiring ----------
@@ -438,6 +810,15 @@
     $("setMaxLoaded").addEventListener("input", function () { this.value = this.value.replace(/\D/g, ""); });
 
     $("btnRefresh").addEventListener("click", loadModels);
+    $("btnLoad").addEventListener("click", function () { loadModel(selectedModel); });
+    $("btnLoadLast").addEventListener("click", function () { var last = lastModel(); if (last) loadModel(last); });
+    $("btnUnloadAll").addEventListener("click", function () {
+      var names = loadedNow.slice();
+      busy($("btnUnloadAll"), true);
+      Promise.all(names.map(function (n) { return api("/api/unload", { model: n }); })).then(function () {
+        toast("Unloaded " + names.join(", ") + ".");
+      }).catch(fail).then(pollStatus);
+    });
     $("btnRemove").addEventListener("click", function () {
       var name = selectedModel;
       if (!name) return;
@@ -468,6 +849,7 @@
         c.formats.map(function (f) { return '<option value="' + esc(f.key) + '">' + esc(f.label) + '</option>'; }).join("");
       loadForm();
       wire();
+      initChat();
       buildCheats();
       initTooltips(document);
       pollStatus();
