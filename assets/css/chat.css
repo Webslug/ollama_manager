@@ -11,9 +11,15 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-  height: 28rem;
+  height: 36rem;
+  min-height: 16rem;
   overflow-y: auto;
   padding: var(--space-3);
+  resize: vertical;   /* drag the bottom-right corner */
+}
+
+.chat-log.chat-log-tall {
+  height: 75vh;
 }
 
 .chat-empty {
@@ -50,8 +56,60 @@
 
 .chat-text {
   color: var(--text);
+  min-width: 0;
+}
+
+.chat-msg {
+  min-width: 0;
+}
+
+.chat-part {
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.chat-part + .chat-code,
+.chat-code + .chat-part,
+.chat-code + .chat-code {
+  margin-top: var(--space-2);
+}
+
+.chat-code {
+  background-color: var(--surface-alt);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  margin-bottom: var(--space-2);
+  overflow: hidden;
+}
+
+.chat-code-head {
+  align-items: center;
+  background-color: var(--surface-raised);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+  display: flex;
+  font-size: 0.8rem;
+  justify-content: space-between;
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-3);
+}
+
+.chat-code pre {
+  margin: 0;
+  overflow-x: auto;
+  padding: var(--space-3);
+}
+
+.chat-code code {
+  background: none;
+  color: var(--text);
+  font-size: 0.85rem;
+  padding: 0;
+  white-space: pre;
+}
+
+.chat-copy {
+  line-height: 1;
+  padding: var(--space-1) var(--space-2);
 }
 
 .chat-msg.pending .chat-text::after {

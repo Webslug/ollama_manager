@@ -397,6 +397,11 @@ def api_log():
     return jsonify(text=logf.read_log())
 
 
+@app.route("/api/log/clear", methods=["POST"])
+def api_log_clear():
+    return jsonify(ok=True, erased=logf.clear_log())
+
+
 def find_free_port(start, tries):
     for port in range(start, start + tries):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:

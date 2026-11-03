@@ -28,6 +28,7 @@
           <li class="nav-item"><a class="nav-link" href="#daemon"><i class="bi bi-power me-1"></i>Daemon</a></li>
           <li class="nav-item"><a class="nav-link" href="#add"><i class="bi bi-plus-circle me-1"></i>Add Model</a></li>
           <li class="nav-item"><a class="nav-link" href="#models"><i class="bi bi-collection me-1"></i>Installed</a></li>
+          <li class="nav-item"><a class="nav-link" href="#chat"><i class="bi bi-chat-dots me-1"></i>Chat</a></li>
           <li class="nav-item"><a class="nav-link" href="#timeout"><i class="bi bi-clock-history me-1"></i>Timeout</a></li>
           <li class="nav-item"><a class="nav-link" href="#settings"><i class="bi bi-sliders me-1"></i>Settings</a></li>
         </ul>
@@ -209,6 +210,9 @@
         </div>
       </div>
 
+      <div class="d-flex justify-content-end mb-2">
+        <button class="btn btn-secondary btn-lg btn-icon" id="btnChatExpand" title="Make the conversation window taller. You can also drag its bottom-right corner."><i class="bi bi-arrows-angle-expand"></i><span>Expand</span></button>
+      </div>
       <div class="chat-log mb-3" id="chatLog" role="log" aria-live="polite" aria-label="Conversation"></div>
 
       <div class="input-group input-group-lg mb-2">
@@ -318,8 +322,9 @@
 
       <h5 class="text-center mb-3"><i class="bi bi-journal-text me-2"></i>Activity log</h5>
       <pre class="code-block log-block" id="logView">Loading...</pre>
-      <div class="text-center mt-3">
+      <div class="d-flex flex-wrap gap-3 justify-content-center mt-3">
         <button class="btn btn-secondary btn-lg btn-icon" id="btnLogRefresh" title="Reload the log"><i class="bi bi-arrow-clockwise"></i>Refresh log</button>
+        <button class="btn btn-danger btn-lg btn-icon" id="btnLogClear" title="Erase the activity log file"><i class="bi bi-trash3"></i>Clear log</button>
       </div>
     </section>
   </main>

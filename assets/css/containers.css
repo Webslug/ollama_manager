@@ -33,6 +33,7 @@
   border-radius: var(--radius-lg);
   padding: var(--space-4);
   box-shadow: var(--bevel-shadow);
+  scroll-margin-top: var(--space-6);   /* keep the sticky navbar off the heading when jumping to a section */
 }
 
 /* Aero Blue glass */

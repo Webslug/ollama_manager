@@ -479,6 +479,82 @@
     updateChatButtons();
   }
 
+  // Messages are stored as the plain text the model wrote. ``` fences are turned into code
+  // blocks only when displayed, so nothing extra is kept in the database.
+  function splitBlocks(text) {
+    var parts = [];
+    var buf = [];
+    var code = false;
+    var lang = "";
+    function flush(isCode) {
+      var body = buf.join("\n");
+      if (!isCode) body = body.replace(/^\n+|\n+$/g, "");
+      if (isCode || body.trim()) parts.push({ code: isCode, lang: lang, text: body });
+      buf = [];
+    }
+    text.split("\n").forEach(function (line) {
+      var open = !code && line.match(/^\s*```\s*([\w+#.-]*)\s*$/);
+      if (open) { flush(false); code = true; lang = open[1]; return; }
+      if (code && /^\s*```\s*$/.test(line)) { flush(true); code = false; lang = ""; return; }
+      buf.push(line);
+    });
+    flush(code);   // an unclosed fence is a block still being written
+    return parts;
+  }
+
+  function fillBody(el, text, streaming) {
+    el.querySelectorAll("[data-bs-original-title]").forEach(function (t) {
+      var tip = bootstrap.Tooltip.getInstance(t);
+      if (tip) tip.dispose();
+    });
+    el.textContent = "";
+    splitBlocks(text).forEach(function (part) {
+      if (!part.code) {
+        var p = document.createElement("div");
+        p.className = "chat-part";
+        p.textContent = part.text;
+        el.appendChild(p);
+        return;
+      }
+      var box = document.createElement("div");
+      box.className = "chat-code";
+      var head = document.createElement("div");
+      head.className = "chat-code-head";
+      var label = document.createElement("span");
+      label.textContent = part.lang || "code";
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn btn-secondary btn-sm btn-icon chat-copy";
+      btn.setAttribute("aria-label", "Copy this code");
+      btn.innerHTML = '<i class="bi bi-clipboard"></i>';
+      if (!streaming) btn.title = "Copy this code";   // tooltips are added once the reply is complete
+      btn.addEventListener("click", function () {
+        copyCode(part.text, btn);
+      });
+      head.appendChild(label);
+      head.appendChild(btn);
+      var pre = document.createElement("pre");
+      var codeEl = document.createElement("code");
+      codeEl.textContent = part.text;
+      pre.appendChild(codeEl);
+      box.appendChild(head);
+      box.appendChild(pre);
+      el.appendChild(box);
+    });
+    if (!streaming) initTooltips(el);
+  }
+
+  function copyCode(text, btn) {
+    var icon = btn.querySelector("i");
+    function done() {
+      icon.className = "bi bi-clipboard-check";
+      setTimeout(function () { icon.className = "bi bi-clipboard"; }, 1500);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, function () { toast("Copy failed.", "error"); });
+    } else { toast("Clipboard is not available in this browser.", "error"); }
+  }
+
   function chatBubble(role, text) {
     var el = document.createElement("div");
     el.className = "chat-msg chat-msg-" + role;
@@ -487,7 +563,7 @@
     who.textContent = role === "user" ? "You" : (chat.model || "Model");
     var body = document.createElement("div");
     body.className = "chat-text";
-    body.textContent = text;
+    fillBody(body, text, false);
     el.appendChild(who);
     el.appendChild(body);
     return el;
@@ -495,6 +571,10 @@
 
   function renderChat() {
     var log = $("chatLog");
+    log.querySelectorAll("[data-bs-original-title]").forEach(function (t) {
+      var tip = bootstrap.Tooltip.getInstance(t);
+      if (tip) tip.dispose();
+    });
     log.textContent = "";
     if (!chat.messages.length) {
       var empty = document.createElement("p");
@@ -599,7 +679,7 @@
       } else if (item.delta) {
         var atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
         reply.content += item.delta;
-        bodyEl.textContent = reply.content;
+        fillBody(bodyEl, reply.content, true);
         if (atBottom) log.scrollTop = log.scrollHeight;
       } else if (item.error) {
         streamError = item.error;
@@ -710,6 +790,14 @@
     });
 
     $("btnChatPrompt").addEventListener("click", showPrompt);
+    $("btnChatExpand").addEventListener("click", function () {
+      var log = $("chatLog");
+      log.style.height = "";   // forget any height set by dragging the corner
+      var tall = log.classList.toggle("chat-log-tall");
+      this.querySelector("i").className = tall ? "bi bi-arrows-angle-contract" : "bi bi-arrows-angle-expand";
+      this.querySelector("span").textContent = tall ? "Shrink" : "Expand";
+      log.scrollTop = log.scrollHeight;
+    });
     $("btnChatSend").addEventListener("click", chatSend);
     $("btnChatStop").addEventListener("click", function () { if (chat.abort) chat.abort.abort(); });
     $("chatInput").addEventListener("keydown", function (e) {
@@ -838,6 +926,12 @@
     });
     $("btnCopyName").addEventListener("click", function () { copyText(selectedModel); });
     $("btnLogRefresh").addEventListener("click", loadLog);
+    $("btnLogClear").addEventListener("click", function () {
+      confirmBox("Clear the activity log?", "Every recorded add and remove event will be erased. This cannot be undone.", "Clear log").then(function (ok) {
+        if (!ok) return;
+        api("/api/log/clear", {}).then(function () { toast("Log cleared."); loadLog(); }).catch(fail);
+      });
+    });
     $("addModal").addEventListener("hidden.bs.modal", loadLog);
   }
 

@@ -49,6 +49,18 @@ def debug_log(message):
         _write("DEBUG", message)
 
 
+def clear_log():
+    """Empty the log file. Returns the number of bytes erased."""
+    with _lock:
+        try:
+            size = os.path.getsize(settings.LOG_FILE)
+        except OSError:
+            return 0
+        with open(settings.LOG_FILE, "w", encoding="utf-8"):
+            pass
+    return size
+
+
 def read_log(max_bytes=20000):
     try:
         with open(settings.LOG_FILE, "rb") as fh:
